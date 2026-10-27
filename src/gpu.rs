@@ -3418,7 +3418,7 @@ impl Gpu {
         self.materialize_clears(id);
         let visible = !OCCLUDED.load(Ordering::Relaxed);
         if let (Some(t), Some(_), true) = (self.tex(id), self.surface.as_ref(), visible) {
-            let (_w, _h) = (t.desc.w, t.desc.h);
+            let (w,h) = (t.desc.w, t.desc.h);
             let tex = t.tex.clone();
             self.end_pass();
             #[cfg(target_os = "android")]
