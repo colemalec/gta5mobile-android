@@ -9,6 +9,7 @@ final class InputManagerCompat implements InputManager.InputDeviceListener {
     interface Listener { void controllersChanged(boolean connected); }
     private final InputManager manager;
     private final Listener listener;
+    volatile String summary = "no pad detected";
     InputManagerCompat(Context context, Listener listener) {
         manager = (InputManager) context.getSystemService(Context.INPUT_SERVICE); this.listener = listener;
     }
@@ -16,6 +17,7 @@ final class InputManagerCompat implements InputManager.InputDeviceListener {
     void stop() { manager.unregisterInputDeviceListener(this); }
     private void update() {
         boolean connected = false;
+        StringBuilder sb = new StringBuilder();
         for (int id : manager.getInputDeviceIds()) {
             InputDevice device = manager.getInputDevice(id);
             if (device == null || device.isVirtual()) continue;
@@ -24,7 +26,9 @@ final class InputManagerCompat implements InputManager.InputDeviceListener {
             // as a pad would hide the touch controls on a phone with no pad.
             if (device.getMotionRanges().isEmpty()) continue;
             connected = true;
+            sb.append(device.getName()).append(" 0x").append(Integer.toHexString(device.getSources())).append("; ");
         }
+        summary = connected ? sb.toString() : "no pad detected";
         listener.controllersChanged(connected);
     }
     @Override public void onInputDeviceAdded(int id) { update(); }

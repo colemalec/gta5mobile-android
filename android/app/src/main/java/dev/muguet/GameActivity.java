@@ -59,6 +59,26 @@ public final class GameActivity extends NativeActivity implements InputManagerCo
     }
 
     private FrameLayout overlay;
+    // NativeActivity gives the game window's input queue to native code, so the
+    // activity's dispatchKeyEvent/dispatchGenericMotionEvent never see gamepad
+    // events. The HUD panel is therefore focusable and forwards what it gets.
+    private boolean activityFocused, hudFocused;
+    private int hudKeys, actKeys, hudMotion, actMotion;
+    private static final int IMMERSIVE_FLAGS = View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+        View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
+    private final class HudLayer extends FrameLayout {
+        HudLayer(android.content.Context c) { super(c); }
+        @Override public boolean dispatchKeyEvent(KeyEvent e) { hudKeys++; return GameActivity.this.dispatchKeyEvent(e) || super.dispatchKeyEvent(e); }
+        @Override public boolean dispatchGenericMotionEvent(MotionEvent e) { hudMotion++; return GameActivity.this.dispatchGenericMotionEvent(e) || super.dispatchGenericMotionEvent(e); }
+        @Override public void onWindowFocusChanged(boolean hasFocus) {
+            super.onWindowFocusChanged(hasFocus);
+            hudFocused = hasFocus; updateFocused();
+        }
+    }
+    private void updateFocused() {
+        focused = activityFocused || hudFocused;
+        if (!focused && controls != null) clearInput();
+    }
     private boolean hudAttached;
     private boolean hudStale;
     private int hudAttempts;
@@ -86,7 +106,8 @@ public final class GameActivity extends NativeActivity implements InputManagerCo
     // before keeps its parent, so a retry needs a fresh root.
     private void rebuildOverlay() {
         FrameLayout previous = overlay;
-        FrameLayout layer = new FrameLayout(this);
+        FrameLayout layer = new HudLayer(this);
+        layer.setSystemUiVisibility(IMMERSIVE_FLAGS);
         if (previous != null) {
             previous.removeView(controls);
             previous.removeView(status);
@@ -151,8 +172,8 @@ public final class GameActivity extends NativeActivity implements InputManagerCo
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
             type,
-            // Not focusable: keyboard and gamepad keep reaching the native activity.
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            // Focusable on purpose: gamepad events only reach Java through a focused Java window.
+            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             android.graphics.PixelFormat.TRANSLUCENT);
         params.gravity = Gravity.TOP | Gravity.START;
         params.token = token;
@@ -181,8 +202,7 @@ public final class GameActivity extends NativeActivity implements InputManagerCo
 
     @Override public void onWindowFocusChanged(boolean focused) {
         super.onWindowFocusChanged(focused);
-        this.focused = focused;
-        if (!focused && controls != null) clearInput();
+        activityFocused = focused; updateFocused();
     }
     @Override protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
@@ -206,6 +226,7 @@ public final class GameActivity extends NativeActivity implements InputManagerCo
     }
     private static boolean isPad(int source) { return (source & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD || (source & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK; }
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        actKeys++;
         padDebug = (isPad(event.getSource()) ? "pad key " : "other key ") + KeyEvent.keyCodeToString(event.getKeyCode()) + " src 0x" + hex(event.getSource());
         if (isPad(event.getSource())) {
             int key = event.getKeyCode();
@@ -241,6 +262,7 @@ public final class GameActivity extends NativeActivity implements InputManagerCo
         }
     }
     @Override public boolean dispatchGenericMotionEvent(MotionEvent e) {
+        actMotion++;
         if (!isPad(e.getSource())) padDebug = "other motion src 0x" + hex(e.getSource());
         if (isPad(e.getSource())) {
             readPadAxes(e);
@@ -336,6 +358,6 @@ public final class GameActivity extends NativeActivity implements InputManagerCo
         if (elapsed < 500_000_000L) return;
         float fps = (presents - fpsFrames) * 1e9f / elapsed;
         fpsAt = now; fpsFrames = presents;
-        if (fpsText != null) fpsText.setText(String.format(java.util.Locale.ROOT, "%.0f FPS", fps) + (controller ? "\n" + padDebug : ""));
+        if (fpsText != null) fpsText.setText(String.format(java.util.Locale.ROOT, "%.0f FPS", fps) + "\nv3 act=" + activityFocused + " hud=" + hudFocused + " keys " + hudKeys + "/" + actKeys + " motion " + hudMotion + "/" + actMotion + "\n" + devices.summary + "\n" + padDebug);
     }
 }
