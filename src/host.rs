@@ -126,7 +126,7 @@ pub fn call(mut caller: Caller<'_, HostState>, idx: usize, params: &[Val], resul
         }
         "_abort_js" => anyhow::bail!("engine called abort()"),
         "emscripten_num_logical_cores" => set_int(results, std::thread::available_parallelism().map(|n| n.get() as i64).unwrap_or(8)),
-        "emscripten_get_heap_max" => set_int(results, 17_179_869_184),
+        "emscripten_get_heap_max" => set_int(results, heap_max_bytes(mem) as i64),
         "emscripten_resize_heap" => set_int(results, resize_heap(mem, int(params, 0) as u64) as i64),
         "_emscripten_system" => set_int(results, if int(params, 0) == 0 { 0 } else { -52 }),
         "emscripten_stack_snapshot" | "emscripten_stack_unwind_buffer" => set_int(results, 0),
@@ -223,16 +223,26 @@ fn invoke(caller: &mut Caller<'_, HostState>, params: &[Val], results: &mut [Val
     }
 }
 
+/// Effective maximum size of the shared heap in bytes: the memory type's
+/// declared maximum (already clamped to the platform cap in `heap_type`),
+/// falling back to 16 GiB if the type has no maximum.
+pub fn heap_max_bytes(mem: &SharedMemory) -> u64 {
+    const FALLBACK: u64 = 17_179_869_184;
+    let ty = mem.ty();
+    let page = 1u64 << ty.page_size_log2();
+    ty.maximum().map(|m| m.saturating_mul(page)).unwrap_or(FALLBACK)
+}
+
 fn resize_heap(mem: &SharedMemory, requested: u64) -> bool {
-    const MAX: u64 = 17_179_869_184;
+    let max_heap: u64 = heap_max_bytes(mem);
     let old = mem.data_size() as u64;
     if requested <= old { return false; }
-    if requested > MAX { return false; }
+    if requested > max_heap { return false; }
     let mut cut = 1u64;
     while cut <= 4 {
         let over = (old as f64 * (1.0 + 0.2 / cut as f64)) as u64;
         let over = over.min(requested + 100_663_296);
-        let new = MAX.min(requested.max(over).div_ceil(65536) * 65536);
+        let new = max_heap.min(requested.max(over).div_ceil(65536) * 65536);
         let pages = (new - old).div_ceil(65536);
         if mem.grow(pages).is_ok() {
             eprintln!("[host] heap grown to {} MB", mem.data_size() >> 20);

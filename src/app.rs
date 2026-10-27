@@ -286,7 +286,7 @@ impl App {
     }
 }
 
-pub fn run(rt: Option<Arc<Runtime>>, startup: crate::config::Startup, args: Vec<String>) -> anyhow::Result<()> {
+pub fn run(_rt: Option<Arc<Runtime>>, startup: crate::config::Startup, args: Vec<String>) -> anyhow::Result<()> {
     #[cfg(not(target_os = "android"))]
     let event_loop = EventLoop::new()?;
     #[cfg(target_os = "android")]
