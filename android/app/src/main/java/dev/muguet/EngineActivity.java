@@ -67,7 +67,7 @@ public final class EngineActivity extends Activity {
     private volatile boolean running, muted, surfaceReady;
     private boolean focused, controller, inCar;
     private int frameLimit = 30;
-    private float lx, ly, rx, ry, lt, rt;
+    private float lx, ly, rx, ry, lt, rt, hx, hy;
     private final HashSet<String> keyboardKeys = new HashSet<>();
     private final HashSet<Integer> padKeys = new HashSet<>();
     private float accLookX, accLookY;
@@ -250,7 +250,7 @@ public final class EngineActivity extends Activity {
     // --- input ---------------------------------------------------------------
     private void clearInput() {
         keyboardKeys.clear(); padKeys.clear();
-        lx = ly = rx = ry = lt = rt = 0; accLookX = accLookY = 0;
+        lx = ly = rx = ry = lt = rt = hx = hy = 0; accLookX = accLookY = 0;
         if (controls != null) controls.release();
         nativeUpdatePad(new String[0], 0, false, 0, 0, false);
     }
@@ -289,10 +289,10 @@ public final class EngineActivity extends Activity {
                 if (down(KeyEvent.KEYCODE_BUTTON_R1)) padButtons |= 1 << 3;     // R1
                 if (down(KeyEvent.KEYCODE_BUTTON_SELECT)) padButtons |= 1 << 8; // Select
                 if (down(KeyEvent.KEYCODE_BUTTON_START)) padButtons |= 1 << 11; // Start
-                if (down(KeyEvent.KEYCODE_DPAD_UP)) padButtons |= 1 << 12;
-                if (down(KeyEvent.KEYCODE_DPAD_DOWN)) padButtons |= 1 << 14;
-                if (down(KeyEvent.KEYCODE_DPAD_LEFT)) padButtons |= 1 << 15;
-                if (down(KeyEvent.KEYCODE_DPAD_RIGHT)) padButtons |= 1 << 13;
+                if (hy < -0.5f || down(KeyEvent.KEYCODE_DPAD_UP)) padButtons |= 1 << 12;
+                if (hy > 0.5f || down(KeyEvent.KEYCODE_DPAD_DOWN)) padButtons |= 1 << 14;
+                if (hx < -0.5f || down(KeyEvent.KEYCODE_DPAD_LEFT)) padButtons |= 1 << 15;
+                if (hx > 0.5f || down(KeyEvent.KEYCODE_DPAD_RIGHT)) padButtons |= 1 << 13;
                 float gas = Math.max(rt, down(KeyEvent.KEYCODE_BUTTON_R2) ? 1f : 0f);
                 float brake = Math.max(lt, down(KeyEvent.KEYCODE_BUTTON_L2) ? 1f : 0f);
                 nativeUpdatePadAnalog(lx, ly, rx, ry, brake, gas, padButtons);
@@ -328,6 +328,38 @@ public final class EngineActivity extends Activity {
         }
     };
 
+
+    // Bluetooth pads disagree on axes: Xbox/PS pads on recent Android put the right
+    // stick on Z/RZ, many generic pads use RX/RY with triggers on Z/RZ, and most
+    // report the D-pad as a hat axis instead of key events. Read whichever is live.
+    private static float axis(MotionEvent e, int a) {
+        android.view.InputDevice d = e.getDevice();
+        if (d == null || d.getMotionRange(a, e.getSource()) == null) return 0f;
+        float v = e.getAxisValue(a);
+        return Math.abs(v) < 0.08f ? 0f : v;
+    }
+    private static boolean has(MotionEvent e, int a) {
+        android.view.InputDevice d = e.getDevice();
+        return d != null && d.getMotionRange(a, e.getSource()) != null;
+    }
+    private void readPadAxes(MotionEvent e) {
+        lx = axis(e, MotionEvent.AXIS_X); ly = axis(e, MotionEvent.AXIS_Y);
+        boolean hasRzTrigger = has(e, MotionEvent.AXIS_LTRIGGER) || has(e, MotionEvent.AXIS_BRAKE);
+        if (has(e, MotionEvent.AXIS_RX) && has(e, MotionEvent.AXIS_RY) && has(e, MotionEvent.AXIS_RZ) && has(e, MotionEvent.AXIS_Z) && !hasRzTrigger) {
+            // Generic layout: right stick RX/RY, triggers Z/RZ.
+            rx = axis(e, MotionEvent.AXIS_RX); ry = axis(e, MotionEvent.AXIS_RY);
+            lt = Math.max(0f, e.getAxisValue(MotionEvent.AXIS_Z)); rt = Math.max(0f, e.getAxisValue(MotionEvent.AXIS_RZ));
+        } else if (has(e, MotionEvent.AXIS_RX) && has(e, MotionEvent.AXIS_RY) && !has(e, MotionEvent.AXIS_Z)) {
+            rx = axis(e, MotionEvent.AXIS_RX); ry = axis(e, MotionEvent.AXIS_RY);
+            lt = Math.max(axis(e, MotionEvent.AXIS_LTRIGGER), axis(e, MotionEvent.AXIS_BRAKE));
+            rt = Math.max(axis(e, MotionEvent.AXIS_RTRIGGER), axis(e, MotionEvent.AXIS_GAS));
+        } else {
+            rx = axis(e, MotionEvent.AXIS_Z); ry = axis(e, MotionEvent.AXIS_RZ);
+            lt = Math.max(axis(e, MotionEvent.AXIS_LTRIGGER), axis(e, MotionEvent.AXIS_BRAKE));
+            rt = Math.max(axis(e, MotionEvent.AXIS_RTRIGGER), axis(e, MotionEvent.AXIS_GAS));
+        }
+        hx = axis(e, MotionEvent.AXIS_HAT_X); hy = axis(e, MotionEvent.AXIS_HAT_Y);
+    }
     private boolean down(int key) { return padKeys.contains(key); }
     private static boolean isPad(int source) {
         return (source & android.view.InputDevice.SOURCE_GAMEPAD) == android.view.InputDevice.SOURCE_GAMEPAD
@@ -367,10 +399,7 @@ public final class EngineActivity extends Activity {
     }
     @Override public boolean dispatchGenericMotionEvent(MotionEvent e) {
         if (isPad(e.getSource())) {
-            lx = e.getAxisValue(MotionEvent.AXIS_X); ly = e.getAxisValue(MotionEvent.AXIS_Y);
-            rx = e.getAxisValue(MotionEvent.AXIS_Z); ry = e.getAxisValue(MotionEvent.AXIS_RZ);
-            lt = Math.max(e.getAxisValue(MotionEvent.AXIS_LTRIGGER), e.getAxisValue(MotionEvent.AXIS_BRAKE));
-            rt = Math.max(e.getAxisValue(MotionEvent.AXIS_RTRIGGER), e.getAxisValue(MotionEvent.AXIS_GAS));
+            readPadAxes(e);
             return true;
         }
         return super.dispatchGenericMotionEvent(e);

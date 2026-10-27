@@ -241,14 +241,42 @@ public final class GameActivity extends NativeActivity implements InputManagerCo
     }
     @Override public boolean dispatchGenericMotionEvent(MotionEvent e) {
         if (isPad(e.getSource())) {
-            lx = e.getAxisValue(MotionEvent.AXIS_X); ly = e.getAxisValue(MotionEvent.AXIS_Y);
-            rx = e.getAxisValue(MotionEvent.AXIS_Z); ry = e.getAxisValue(MotionEvent.AXIS_RZ);
-            lt = Math.max(e.getAxisValue(MotionEvent.AXIS_LTRIGGER), e.getAxisValue(MotionEvent.AXIS_BRAKE));
-            rt = Math.max(e.getAxisValue(MotionEvent.AXIS_RTRIGGER), e.getAxisValue(MotionEvent.AXIS_GAS));
-            hx = e.getAxisValue(MotionEvent.AXIS_HAT_X); hy = e.getAxisValue(MotionEvent.AXIS_HAT_Y);
+            readPadAxes(e);
             return true;
         }
         return super.dispatchGenericMotionEvent(e);
+    }
+
+    // Bluetooth pads disagree on axes: Xbox/PS pads on recent Android put the right
+    // stick on Z/RZ, many generic pads use RX/RY with triggers on Z/RZ, and most
+    // report the D-pad as a hat axis instead of key events. Read whichever is live.
+    private static float axis(MotionEvent e, int a) {
+        android.view.InputDevice d = e.getDevice();
+        if (d == null || d.getMotionRange(a, e.getSource()) == null) return 0f;
+        float v = e.getAxisValue(a);
+        return Math.abs(v) < 0.08f ? 0f : v;
+    }
+    private static boolean has(MotionEvent e, int a) {
+        android.view.InputDevice d = e.getDevice();
+        return d != null && d.getMotionRange(a, e.getSource()) != null;
+    }
+    private void readPadAxes(MotionEvent e) {
+        lx = axis(e, MotionEvent.AXIS_X); ly = axis(e, MotionEvent.AXIS_Y);
+        boolean hasRzTrigger = has(e, MotionEvent.AXIS_LTRIGGER) || has(e, MotionEvent.AXIS_BRAKE);
+        if (has(e, MotionEvent.AXIS_RX) && has(e, MotionEvent.AXIS_RY) && has(e, MotionEvent.AXIS_RZ) && has(e, MotionEvent.AXIS_Z) && !hasRzTrigger) {
+            // Generic layout: right stick RX/RY, triggers Z/RZ.
+            rx = axis(e, MotionEvent.AXIS_RX); ry = axis(e, MotionEvent.AXIS_RY);
+            lt = Math.max(0f, e.getAxisValue(MotionEvent.AXIS_Z)); rt = Math.max(0f, e.getAxisValue(MotionEvent.AXIS_RZ));
+        } else if (has(e, MotionEvent.AXIS_RX) && has(e, MotionEvent.AXIS_RY) && !has(e, MotionEvent.AXIS_Z)) {
+            rx = axis(e, MotionEvent.AXIS_RX); ry = axis(e, MotionEvent.AXIS_RY);
+            lt = Math.max(axis(e, MotionEvent.AXIS_LTRIGGER), axis(e, MotionEvent.AXIS_BRAKE));
+            rt = Math.max(axis(e, MotionEvent.AXIS_RTRIGGER), axis(e, MotionEvent.AXIS_GAS));
+        } else {
+            rx = axis(e, MotionEvent.AXIS_Z); ry = axis(e, MotionEvent.AXIS_RZ);
+            lt = Math.max(axis(e, MotionEvent.AXIS_LTRIGGER), axis(e, MotionEvent.AXIS_BRAKE));
+            rt = Math.max(axis(e, MotionEvent.AXIS_RTRIGGER), axis(e, MotionEvent.AXIS_GAS));
+        }
+        hx = axis(e, MotionEvent.AXIS_HAT_X); hy = axis(e, MotionEvent.AXIS_HAT_Y);
     }
     private boolean down(int key) { return padKeys.contains(key); }
     private static float curve(float v) { float a = Math.abs(v); return a < 0.12f ? 0 : (float) Math.copySign(Math.pow((a - 0.12) / 0.88, 1.8), v); }
