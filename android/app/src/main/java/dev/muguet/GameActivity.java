@@ -206,6 +206,7 @@ public final class GameActivity extends NativeActivity implements InputManagerCo
     }
     private static boolean isPad(int source) { return (source & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD || (source & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK; }
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        padDebug = (isPad(event.getSource()) ? "pad key " : "other key ") + KeyEvent.keyCodeToString(event.getKeyCode()) + " src 0x" + hex(event.getSource());
         if (isPad(event.getSource())) {
             int key = event.getKeyCode();
             if (event.getAction() == KeyEvent.ACTION_DOWN) padKeys.add(key);
@@ -240,8 +241,10 @@ public final class GameActivity extends NativeActivity implements InputManagerCo
         }
     }
     @Override public boolean dispatchGenericMotionEvent(MotionEvent e) {
+        if (!isPad(e.getSource())) padDebug = "other motion src 0x" + hex(e.getSource());
         if (isPad(e.getSource())) {
             readPadAxes(e);
+            padDebug = String.format(java.util.Locale.ROOT, "axes L %.1f,%.1f R %.1f,%.1f LT %.1f RT %.1f hat %.0f,%.0f", lx, ly, rx, ry, lt, rt, hx, hy);
             return true;
         }
         return super.dispatchGenericMotionEvent(e);
@@ -252,13 +255,13 @@ public final class GameActivity extends NativeActivity implements InputManagerCo
     // report the D-pad as a hat axis instead of key events. Read whichever is live.
     private static float axis(MotionEvent e, int a) {
         android.view.InputDevice d = e.getDevice();
-        if (d == null || d.getMotionRange(a, e.getSource()) == null) return 0f;
+        if (d == null || d.getMotionRange(a) == null) return 0f;
         float v = e.getAxisValue(a);
         return Math.abs(v) < 0.08f ? 0f : v;
     }
     private static boolean has(MotionEvent e, int a) {
         android.view.InputDevice d = e.getDevice();
-        return d != null && d.getMotionRange(a, e.getSource()) != null;
+        return d != null && d.getMotionRange(a) != null;
     }
     private void readPadAxes(MotionEvent e) {
         lx = axis(e, MotionEvent.AXIS_X); ly = axis(e, MotionEvent.AXIS_Y);
@@ -278,6 +281,8 @@ public final class GameActivity extends NativeActivity implements InputManagerCo
         }
         hx = axis(e, MotionEvent.AXIS_HAT_X); hy = axis(e, MotionEvent.AXIS_HAT_Y);
     }
+    private String padDebug = "waiting for input";
+    private static String hex(int v) { return Integer.toHexString(v); }
     private boolean down(int key) { return padKeys.contains(key); }
     private static float curve(float v) { float a = Math.abs(v); return a < 0.12f ? 0 : (float) Math.copySign(Math.pow((a - 0.12) / 0.88, 1.8), v); }
     private final Runnable tick = new Runnable() {
@@ -331,6 +336,6 @@ public final class GameActivity extends NativeActivity implements InputManagerCo
         if (elapsed < 500_000_000L) return;
         float fps = (presents - fpsFrames) * 1e9f / elapsed;
         fpsAt = now; fpsFrames = presents;
-        if (fpsText != null) fpsText.setText(String.format(java.util.Locale.ROOT, "%.0f FPS", fps));
+        if (fpsText != null) fpsText.setText(String.format(java.util.Locale.ROOT, "%.0f FPS", fps) + (controller ? "\n" + padDebug : ""));
     }
 }

@@ -334,13 +334,13 @@ public final class EngineActivity extends Activity {
     // report the D-pad as a hat axis instead of key events. Read whichever is live.
     private static float axis(MotionEvent e, int a) {
         android.view.InputDevice d = e.getDevice();
-        if (d == null || d.getMotionRange(a, e.getSource()) == null) return 0f;
+        if (d == null || d.getMotionRange(a) == null) return 0f;
         float v = e.getAxisValue(a);
         return Math.abs(v) < 0.08f ? 0f : v;
     }
     private static boolean has(MotionEvent e, int a) {
         android.view.InputDevice d = e.getDevice();
-        return d != null && d.getMotionRange(a, e.getSource()) != null;
+        return d != null && d.getMotionRange(a) != null;
     }
     private void readPadAxes(MotionEvent e) {
         lx = axis(e, MotionEvent.AXIS_X); ly = axis(e, MotionEvent.AXIS_Y);
@@ -360,12 +360,15 @@ public final class EngineActivity extends Activity {
         }
         hx = axis(e, MotionEvent.AXIS_HAT_X); hy = axis(e, MotionEvent.AXIS_HAT_Y);
     }
+    private String padDebug = "waiting for input";
+    private static String hex(int v) { return Integer.toHexString(v); }
     private boolean down(int key) { return padKeys.contains(key); }
     private static boolean isPad(int source) {
         return (source & android.view.InputDevice.SOURCE_GAMEPAD) == android.view.InputDevice.SOURCE_GAMEPAD
             || (source & android.view.InputDevice.SOURCE_JOYSTICK) == android.view.InputDevice.SOURCE_JOYSTICK;
     }
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        padDebug = (isPad(event.getSource()) ? "pad key " : "other key ") + KeyEvent.keyCodeToString(event.getKeyCode()) + " src 0x" + hex(event.getSource());
         if (isPad(event.getSource())) {
             int key = event.getKeyCode();
             if (event.getAction() == KeyEvent.ACTION_DOWN) padKeys.add(key); else padKeys.remove(key);
@@ -398,8 +401,10 @@ public final class EngineActivity extends Activity {
         }
     }
     @Override public boolean dispatchGenericMotionEvent(MotionEvent e) {
+        if (!isPad(e.getSource())) padDebug = "other motion src 0x" + hex(e.getSource());
         if (isPad(e.getSource())) {
             readPadAxes(e);
+            padDebug = String.format(java.util.Locale.ROOT, "axes L %.1f,%.1f R %.1f,%.1f LT %.1f RT %.1f hat %.0f,%.0f", lx, ly, rx, ry, lt, rt, hx, hy);
             return true;
         }
         return super.dispatchGenericMotionEvent(e);
@@ -413,7 +418,7 @@ public final class EngineActivity extends Activity {
         if (elapsed < 500_000_000L) return;
         float fps = (frames - fpsFrames) * 100.0f / (elapsed / 1e9f);
         fpsAt = now; fpsFrames = frames; lastFps = (long) fps;
-        if (fpsText != null) fpsText.setText(String.format(java.util.Locale.ROOT, "%.0f FPS", fps));
+        if (fpsText != null) fpsText.setText(String.format(java.util.Locale.ROOT, "%.0f FPS", fps) + (controller ? "\n" + padDebug : ""));
     }
 
     // --- lifecycle -----------------------------------------------------------
