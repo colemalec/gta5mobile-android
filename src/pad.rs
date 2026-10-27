@@ -10,6 +10,9 @@ use std::time::{Duration, Instant};
 
 pub static ACTIVE: AtomicBool = AtomicBool::new(false);
 
+// Only the Android build feeds a host pad into the engine.
+pub fn apply(_mem: &wasmtime::SharedMemory, _pad: u64) {}
+
 pub static IN_VEHICLE: AtomicBool = AtomicBool::new(false);
 
 pub static HORN_PAD: AtomicBool = AtomicBool::new(false);

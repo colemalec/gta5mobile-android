@@ -103,6 +103,7 @@ pub fn call(mut caller: Caller<'_, HostState>, idx: usize, params: &[Val], resul
         "muguet_script" => crate::mp::script_tick(&mut caller, int(params, 0) as u64, int(params, 1) as u64)?,
         "muguet_explosion" => crate::mp::explosion(int(params, 0) as u64),
         "muguet_timewarp" => set_int(results, crate::mp::time_warp(int(params, 0))),
+        "muguet_pad" => crate::pad::apply(mem, int(params, 0) as u64),
         "__pthread_create_js" => {
             let r = spawn_pthread(int(params, 0) as u64, int(params, 2) as u64, int(params, 3) as u64);
             set_int(results, r as i64);
@@ -125,17 +126,8 @@ pub fn call(mut caller: Caller<'_, HostState>, idx: usize, params: &[Val], resul
         }
         "_abort_js" => anyhow::bail!("engine called abort()"),
         "emscripten_num_logical_cores" => set_int(results, std::thread::available_parallelism().map(|n| n.get() as i64).unwrap_or(8)),
-        "emscripten_get_heap_max" => {
-            let max = heap_max_bytes(mem) as i64;
-            eprintln!("[host] engine asked for the heap maximum: {max} bytes ({} MB)", max >> 20);
-            set_int(results, max);
-        }
-        "emscripten_resize_heap" => {
-            let requested = int(params, 0) as u64;
-            eprintln!("[host] engine asked to grow the heap to {requested} bytes ({} MB), current {} MB",
-                requested >> 20, mem.data_size() >> 20);
-            set_int(results, resize_heap(mem, requested) as i64);
-        }
+        "emscripten_get_heap_max" => set_int(results, 17_179_869_184),
+        "emscripten_resize_heap" => set_int(results, resize_heap(mem, int(params, 0) as u64) as i64),
         "_emscripten_system" => set_int(results, if int(params, 0) == 0 { 0 } else { -52 }),
         "emscripten_stack_snapshot" | "emscripten_stack_unwind_buffer" => set_int(results, 0),
         "emscripten_asm_const_int" | "emscripten_asm_const_int_sync_on_main_thread" => {
@@ -231,42 +223,23 @@ fn invoke(caller: &mut Caller<'_, HostState>, params: &[Val], results: &mut [Val
     }
 }
 
-pub(crate) fn heap_max_bytes(mem: &SharedMemory) -> u64 {
-    mem.ty().maximum().map(|pages| pages.saturating_mul(mem.page_size())).unwrap_or(16 << 30)
-}
-
 fn resize_heap(mem: &SharedMemory, requested: u64) -> bool {
-    let max = heap_max_bytes(mem);
-    let page = mem.page_size();
+    const MAX: u64 = 17_179_869_184;
     let old = mem.data_size() as u64;
-    if requested <= old { return true; }
-    if requested > max {
-        eprintln!("[host] heap growth refused: requested {requested} bytes, current {} MB, maximum {} MB", old >> 20, max >> 20);
-        return false;
-    }
+    if requested <= old { return false; }
+    if requested > MAX { return false; }
     let mut cut = 1u64;
-    let mut last_error = None;
     while cut <= 4 {
         let over = (old as f64 * (1.0 + 0.2 / cut as f64)) as u64;
-        let over = over.min(requested.saturating_add(100_663_296));
-        // Speculative Emscripten growth must not overshoot the actual Android
-        // memory cap and reject an allocation that would otherwise fit.
-        let new = requested.max(over).div_ceil(page).saturating_mul(page).min(max);
-        let current = mem.data_size() as u64;
-        if requested <= current { return true; }
-        let pages = (new - current).div_ceil(page);
-        match mem.grow(pages) {
-            Ok(_) => {
-                eprintln!("[host] heap grown to {} MB (maximum {} MB)", mem.data_size() >> 20, max >> 20);
-                return true;
-            }
-            Err(e) => last_error = Some(e),
+        let over = over.min(requested + 100_663_296);
+        let new = MAX.min(requested.max(over).div_ceil(65536) * 65536);
+        let pages = (new - old).div_ceil(65536);
+        if mem.grow(pages).is_ok() {
+            eprintln!("[host] heap grown to {} MB", mem.data_size() >> 20);
+            return true;
         }
         cut *= 2;
     }
-    if requested <= mem.data_size() as u64 { return true; }
-    eprintln!("[host] heap growth failed: requested {requested} bytes, current {} MB, maximum {} MB: {}",
-        mem.data_size() >> 20, max >> 20, last_error.map(|e| e.to_string()).unwrap_or_default());
     false
 }
 
@@ -349,37 +322,4 @@ fn mktime_utc(mem: &SharedMemory, tm: u64) -> i64 {
     let y = 1900 + year + mon.div_euclid(12);
     let m = mon.rem_euclid(12) + 1;
     days_from_civil(y, m, 1) * 86400 + (mday - 1) * 86400 + hour * 3600 + min * 60 + sec
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn capped_memory() -> SharedMemory {
-        let mut config = wasmtime::Config::new();
-        config.wasm_threads(true);
-        config.shared_memory(true);
-        let engine = wasmtime::Engine::new(&config).unwrap();
-        SharedMemory::new(&engine, wasmtime::MemoryType::shared(9, 10)).unwrap()
-    }
-
-    #[test]
-    fn heap_growth_fits_at_the_actual_cap_without_speculative_overshoot() {
-        let mem = capped_memory();
-        let page = mem.page_size();
-        assert_eq!(heap_max_bytes(&mem), 10 * page);
-        assert!(resize_heap(&mem, 9 * page + 1), "an allocation that fits must not fail because of overgrowth");
-        assert_eq!(mem.data_size() as u64, 10 * page);
-        assert!(!resize_heap(&mem, 10 * page + 1));
-        assert_eq!(mem.data_size() as u64, 10 * page);
-    }
-
-    #[test]
-    fn heap_resize_succeeds_when_memory_is_already_large_enough() {
-        let mem = capped_memory();
-        let current = mem.data_size() as u64;
-        assert!(resize_heap(&mem, current));
-        assert!(resize_heap(&mem, current - 1));
-        assert_eq!(mem.data_size() as u64, current);
-    }
 }

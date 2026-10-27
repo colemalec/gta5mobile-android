@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use jni::objects::{JClass, JObject, JObjectArray, JString, JValue};
-use jni::sys::{jboolean, jfloat, jint, jlong, jstring, JNI_FALSE, JNI_TRUE};
+use jni::sys::{jboolean, jfloat, jint, jlong, JNI_FALSE, JNI_TRUE};
 use jni::{JNIEnv, JavaVM};
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
@@ -76,23 +76,6 @@ pub extern "system" fn Java_dev_muguet_LauncherActivity_nativePrepare(mut env: J
 }
 
 #[no_mangle]
-pub extern "system" fn Java_dev_muguet_LauncherActivity_nativeGameRoot(mut env: JNIEnv, _activity: JObject, path: JString) -> jstring {
-    let path: String = match env.get_string(&path) {
-        Ok(text) => text.into(),
-        Err(_) => return std::ptr::null_mut(),
-    };
-    // The launcher picked a folder that holds the release; the game itself can
-    // sit a few levels deeper in it.
-    match crate::config::find_game_root(std::path::Path::new(&path)) {
-        Some(root) => match env.new_string(root.to_string_lossy().as_ref()) {
-            Ok(text) => text.into_raw(),
-            Err(_) => std::ptr::null_mut(),
-        },
-        None => std::ptr::null_mut(),
-    }
-}
-
-#[no_mangle]
 pub extern "system" fn Java_dev_muguet_LauncherActivity_nativeImport(mut env: JNIEnv, activity: JObject, archive: JString) {
     let result = (|| -> Result<()> {
         let path: String = env.get_string(&archive)?.into();
@@ -127,6 +110,19 @@ pub extern "system" fn Java_dev_muguet_GameActivity_nativeInput(mut env: JNIEnv,
         Ok(())
     })();
     if let Err(e) = result { java_error(&mut env, e); }
+}
+
+// Real analog pad state for the engine's own pad 0 (see pad_portable.rs).
+#[no_mangle]
+pub extern "system" fn Java_dev_muguet_GameActivity_nativePad(_env: JNIEnv, _class: JClass, active: jboolean, buttons: jint, lx: jfloat, ly: jfloat, rx: jfloat, ry: jfloat, lt: jfloat, rt: jfloat) {
+    crate::pad::update(active != 0, buttons as u32, [lx, ly, rx, ry], lt, rt);
+}
+
+// True until the player has picked Story Mode / Sandbox on the host start menu,
+// which still takes keyboard keys.
+#[no_mangle]
+pub extern "system" fn Java_dev_muguet_GameActivity_nativeStartPending(_env: JNIEnv, _class: JClass) -> jboolean {
+    if crate::input::start_mode() == 0 { JNI_TRUE } else { JNI_FALSE }
 }
 
 #[no_mangle]

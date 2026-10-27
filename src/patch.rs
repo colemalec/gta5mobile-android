@@ -19,9 +19,12 @@ const HOOKS: &[(&str, &str, &[Arg])] = &[
     ("muguet_script", "GtaThread::Update(int)", &[Arg::Local0, Arg::TlsBase]),
     ("muguet_explosion", "CExplosionManager::AddExplosion(CExplosionManager::CExplosionArgs&, CProjectile*, bool)", &[Arg::Local0]),
     ("muguet_timewarp", "CTimeWarper::SetTargetTimeWarp(TW_Dir)", &[Arg::Local1Replaced]),
+    // ioPad::Update clears each pad, then calls UpdateDebug(pad) as its last step.
+    // Entering UpdateDebug is the point where a host-provided pad can be written in.
+    ("muguet_pad", "rage::ioPad::UpdateDebug()", &[Arg::Local0]),
 ];
 
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
 
 fn returns(args: &[Arg]) -> bool {
     args.contains(&Arg::Local1Replaced)
