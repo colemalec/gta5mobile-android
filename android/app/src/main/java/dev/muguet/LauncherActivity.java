@@ -167,6 +167,7 @@ public final class LauncherActivity extends Activity {
     private Spinner[] graphicsSpinners;
     private Spinner graphicsPreset;
     private boolean loadingGraphics;
+    private int presetShown;
 
     private static native boolean nativePrepare(String directory);
     private native void nativeImport(String archive);
@@ -352,10 +353,16 @@ public final class LauncherActivity extends Activity {
         TextView graphicsHeader = new TextView(this);
         graphicsHeader.setText("Graphics — passed to the engine as arguments, the same knobs the web launcher exposes");
         column.addView(graphicsHeader);
-        graphicsPreset = choice(column, "Graphics preset", new String[]{"Low (phone default)", "Engine default", "Max"}, 0);
+        graphicsPreset = choice(column, "Graphics preset", new String[]{"Low (phone default)", "Engine default", "Max"},
+            Math.max(0, Math.min(PRESETS.length - 1, settings.optInt("graphics_preset", 0))));
+        presetShown = graphicsPreset.getSelectedItemPosition();
         graphicsPreset.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(AdapterView<?> parent, android.view.View view, int position, long id) {
-                if (!loadingGraphics) applyPreset(position);
+                // A Spinner reports its initial selection once after layout. Treating
+                // that as a choice reset every saved setting to the Low preset.
+                if (loadingGraphics || position == presetShown) return;
+                presetShown = position;
+                applyPreset(position);
             }
             @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
@@ -453,27 +460,44 @@ public final class LauncherActivity extends Activity {
         try {
             double renderScale = Double.parseDouble(scale.getText().toString());
             if (!Double.isFinite(renderScale) || renderScale < 0.25 || renderScale > 1) throw new IllegalArgumentException("Render scale must be between 0.25 and 1.0");
-            settings.put("scale", renderScale);
-            settings.put("start_mode", mode.getSelectedItemPosition() + 1);
-            settings.put("android_heap_gb", heap.getSelectedItemPosition() + 3);
-            settings.put("texture_quality", settings.optInt("texture_quality", 0));
-            settings.put("graphics", graphicsChoices());
-            settings.put("extra_args", graphicsArgs());
-            settings.put("gpu_cpu_bc", cpuBc.isChecked());
-            settings.put("gpu_software_clip", softwareClip.isChecked());
-            settings.put("fullscreen", true);
-            settings.put("mute", mute.isChecked());
-            settings.put("multiplayer", multiplayer.isChecked());
-            settings.put("relay_url", relayUrl.getText().toString().trim());
-            settings.put("relay_room", relayRoom.getText().toString().trim());
-            // Not trimmed: an access code may legitimately begin or end with a space.
-            settings.put("relay_key", relayKey.getText().toString());
-            settings.put("player_name", name.getText().toString().trim());
-            settings.put("last_magnet", magnetField.getText().toString().trim());
-            settings.put("touch_sensitivity", LookSensitivity.fromSlider(sensitivity.getProgress()));
+            storeSettings();
             saveSettings();
             startActivity(new Intent(this, activity));
         } catch (Exception e) { error(e); }
+    }
+
+    // Copies every control into the settings object. A render scale that does
+    // not parse is left at its last good value rather than blocking the save.
+    private void storeSettings() throws Exception {
+        try {
+            double renderScale = Double.parseDouble(scale.getText().toString());
+            if (Double.isFinite(renderScale) && renderScale >= 0.25 && renderScale <= 1) settings.put("scale", renderScale);
+        } catch (NumberFormatException ignored) {}
+        settings.put("graphics_preset", graphicsPreset.getSelectedItemPosition());
+        settings.put("start_mode", mode.getSelectedItemPosition() + 1);
+        settings.put("android_heap_gb", heap.getSelectedItemPosition() + 3);
+        settings.put("texture_quality", settings.optInt("texture_quality", 0));
+        settings.put("graphics", graphicsChoices());
+        settings.put("extra_args", graphicsArgs());
+        settings.put("gpu_cpu_bc", cpuBc.isChecked());
+        settings.put("gpu_software_clip", softwareClip.isChecked());
+        settings.put("fullscreen", true);
+        settings.put("mute", mute.isChecked());
+        settings.put("multiplayer", multiplayer.isChecked());
+        settings.put("relay_url", relayUrl.getText().toString().trim());
+        settings.put("relay_room", relayRoom.getText().toString().trim());
+        // Not trimmed: an access code may legitimately begin or end with a space.
+        settings.put("relay_key", relayKey.getText().toString());
+        settings.put("player_name", name.getText().toString().trim());
+        settings.put("last_magnet", magnetField.getText().toString().trim());
+        settings.put("touch_sensitivity", LookSensitivity.fromSlider(sensitivity.getProgress()));
+    }
+
+    // Closing or switching away from the launcher keeps what was set.
+    @Override protected void onPause() {
+        super.onPause();
+        if (settings == null || sensitivity == null) return;
+        try { storeSettings(); saveSettings(); } catch (Exception ignored) {}
     }
 
     // Opens a link with whatever browser the phone has. Devices without a
@@ -827,8 +851,7 @@ public final class LauncherActivity extends Activity {
         JSONObject out = new JSONObject();
         try {
             for (int i = 0; i < GRAPHICS.length; i++) {
-                String value = graphicsValue(i);
-                if (!"auto".equals(value)) out.put(GRAPHICS[i][1], value);
+                out.put(GRAPHICS[i][1], graphicsValue(i));
             }
         } catch (Exception e) { error(e); }
         return out;
