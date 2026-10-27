@@ -22,6 +22,9 @@ public final class GameActivity extends NativeActivity implements InputManagerCo
     static { System.loadLibrary("muguet"); }
     static native void nativeInput(String[] keys, int buttons, boolean horn, boolean controller);
     static native void nativeLook(float dx, float dy);
+    // Real analog pad for the engine's own pad 0; buttons use the engine's pad bits.
+    static native void nativePad(boolean active, int buttons, float lx, float ly, float rx, float ry, float lt, float rt);
+    static native boolean nativeStartPending();
     static native boolean nativeInVehicle();
     static native boolean nativeHasFrame();
     static native long nativePresents();
@@ -218,7 +221,7 @@ public final class GameActivity extends NativeActivity implements InputManagerCo
     }
     private void clearInput() {
         padKeys.clear(); keyboardKeys.clear(); lx = ly = rx = ry = lt = rt = hx = hy = 0;
-        controls.release(); nativeInput(new String[0], 0, false, controller);
+        controls.release(); nativeInput(new String[0], 0, false, controller); nativePad(false, 0, 0, 0, 0, 0, 0, 0);
     }
     @Override public void controllersChanged(boolean connected) {
         controller = connected; clearInput(); controls.setVisibility(connected ? View.GONE : View.VISIBLE);
@@ -319,29 +322,35 @@ public final class GameActivity extends NativeActivity implements InputManagerCo
             int buttons = touch.buttons;
             boolean horn = touch.horn;
             if (controller) {
-                if (lx < -0.3) keys.add("KeyA"); if (lx > 0.3) keys.add("KeyD");
-                if (ly < -0.3) keys.add(inCar ? "Numpad8" : "KeyW"); if (ly > 0.3) keys.add(inCar ? "Numpad2" : "KeyS");
-                boolean gas = rt > 0.2 || down(KeyEvent.KEYCODE_BUTTON_R2), brake = lt > 0.2 || down(KeyEvent.KEYCODE_BUTTON_L2);
-                if (inCar) { if (gas) keys.add("KeyW"); if (brake) keys.add("KeyS"); horn |= down(KeyEvent.KEYCODE_BUTTON_THUMBL); }
-                else {
-                    if (gas) buttons |= 1; if (brake) buttons |= 2;
-                    if (down(KeyEvent.KEYCODE_BUTTON_A)) keys.add("ShiftLeft");
-                    if (down(KeyEvent.KEYCODE_BUTTON_THUMBL)) keys.add("ControlLeft");
+                // The game has its own pad code (ioPad); hand it real analog values
+                // so it treats this as a connected gamepad rather than keyboard+mouse.
+                int pb = 0;
+                if (down(KeyEvent.KEYCODE_BUTTON_A)) pb |= 1 << 6;
+                if (down(KeyEvent.KEYCODE_BUTTON_B)) pb |= 1 << 5;
+                if (down(KeyEvent.KEYCODE_BUTTON_X)) pb |= 1 << 7;
+                if (down(KeyEvent.KEYCODE_BUTTON_Y)) pb |= 1 << 4;
+                if (down(KeyEvent.KEYCODE_BUTTON_L1)) pb |= 1 << 2;
+                if (down(KeyEvent.KEYCODE_BUTTON_R1)) pb |= 1 << 3;
+                if (down(KeyEvent.KEYCODE_BUTTON_SELECT)) pb |= 1 << 8;
+                if (down(KeyEvent.KEYCODE_BUTTON_THUMBL)) pb |= 1 << 9;
+                if (down(KeyEvent.KEYCODE_BUTTON_THUMBR)) pb |= 1 << 10;
+                if (down(KeyEvent.KEYCODE_BUTTON_START)) pb |= 1 << 11;
+                if (hy < -0.5 || down(KeyEvent.KEYCODE_DPAD_UP)) pb |= 1 << 12;
+                if (hx > 0.5 || down(KeyEvent.KEYCODE_DPAD_RIGHT)) pb |= 1 << 13;
+                if (hy > 0.5 || down(KeyEvent.KEYCODE_DPAD_DOWN)) pb |= 1 << 14;
+                if (hx < -0.5 || down(KeyEvent.KEYCODE_DPAD_LEFT)) pb |= 1 << 15;
+                float gasV = Math.max(rt, down(KeyEvent.KEYCODE_BUTTON_R2) ? 1f : 0f);
+                float brakeV = Math.max(lt, down(KeyEvent.KEYCODE_BUTTON_L2) ? 1f : 0f);
+                nativePad(true, pb, lx, ly, rx, ry, brakeV, gasV);
+                // The host's Story/Sandbox start menu still reads keyboard keys.
+                if (nativeStartPending()) {
+                    if (down(KeyEvent.KEYCODE_BUTTON_A)) keys.add("Enter");
+                    if (down(KeyEvent.KEYCODE_BUTTON_X)) keys.add("Space");
+                    if (down(KeyEvent.KEYCODE_BUTTON_B)) keys.add("Backspace");
+                    if (down(KeyEvent.KEYCODE_BUTTON_Y)) keys.add("Digit5");
                 }
-                if (down(KeyEvent.KEYCODE_BUTTON_A)) keys.add("Enter");
-                if (down(KeyEvent.KEYCODE_BUTTON_B)) { keys.add("KeyR"); keys.add("Backspace"); }
-                if (down(KeyEvent.KEYCODE_BUTTON_X)) keys.add("Space");
-                if (down(KeyEvent.KEYCODE_BUTTON_Y)) keys.add("KeyF");
-                if (down(KeyEvent.KEYCODE_BUTTON_L1)) keys.add("Tab");
-                if (down(KeyEvent.KEYCODE_BUTTON_R1)) keys.add(inCar ? "Space" : "KeyQ");
-                if (down(KeyEvent.KEYCODE_BUTTON_THUMBR)) keys.add("KeyC");
-                if (down(KeyEvent.KEYCODE_BUTTON_START)) keys.add("Escape");
-                if (down(KeyEvent.KEYCODE_BUTTON_SELECT)) keys.add("KeyV");
-                if (hy < -0.5 || down(KeyEvent.KEYCODE_DPAD_UP)) keys.add("ArrowUp");
-                if (hy > 0.5 || down(KeyEvent.KEYCODE_DPAD_DOWN)) keys.add("ArrowDown");
-                if (hx < -0.5 || down(KeyEvent.KEYCODE_DPAD_LEFT)) keys.add("ArrowLeft");
-                if (hx > 0.5 || down(KeyEvent.KEYCODE_DPAD_RIGHT)) keys.add("ArrowRight");
-                nativeLook(curve(rx) * 700 * dt, curve(ry) * 700 * dt);
+            } else {
+                nativePad(false, 0, 0, 0, 0, 0, 0, 0);
             }
             nativeInput(keys.toArray(new String[0]), buttons, horn, controller);
             updateFps(now);
